@@ -80,14 +80,16 @@ RUN cmake --build build -- -j$(nproc) \
     && cmake --install build --prefix /opt/lichtfeld \
     && rm -rf build ${VCPKG_ROOT}/buildtrees ${VCPKG_ROOT}/downloads
 
-# Verzamel de gedeelde libraries die het programma nodig heeft (behalve de
-# CUDA-driver, die levert de NVIDIA-runtime van de host)
-RUN BIN="$(find /opt/lichtfeld/bin -maxdepth 1 -type f -executable | head -n1)" \
-    && test -n "$BIN" \
-    && ln -s "$BIN" /opt/lichtfeld/lichtfeld-bin \
+# Verzamel de gedeelde libraries die het echte programma nodig heeft (behalve de
+# CUDA-driver, die levert de NVIDIA-runtime van de host). Expliciet het programma,
+# niet het opstartscript run_lichtfeld.sh dat ernaast staat.
+RUN BIN=/opt/lichtfeld/bin/LichtFeld-Studio \
+    && test -x "$BIN" \
+    && test -x /opt/lichtfeld/bin/run_lichtfeld.sh \
     && mkdir -p /opt/lichtfeld/vendor-libs \
-    && ldd "$BIN" | awk '{print $3}' | grep '^/' | sort -u \
-        | grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux[^/]*|libstdc\+\+|libgcc_s)\.so' \
+    && LD_LIBRARY_PATH="/opt/lichtfeld/lib:${LD_LIBRARY_PATH}" ldd "$BIN" \
+        | awk '{print $3}' | grep '^/' | grep -v '^/opt/lichtfeld/' | sort -u \
+        | grep -vE '/(libc|libm|libpthread|libdl|librt|ld-linux[^/]*|libstdc\+\+|libgcc_s|libcuda|libnvidia[^/]*)\.so' \
         | xargs -I{} sh -c 'cp -L {} /opt/lichtfeld/vendor-libs/ 2>/dev/null || true'
 
 ########################################
@@ -109,7 +111,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/lichtfeld /opt/lichtfeld
-RUN ln -s /opt/lichtfeld/lichtfeld-bin /usr/local/bin/LichtFeld-Studio
+
+# Kort commando 'LichtFeld-Studio': een klein script dat het officiele
+# opstartscript via zijn echte pad aanroept (een symlink zou het script
+# zichzelf laten starten).
+RUN printf '#!/bin/sh\nexec /opt/lichtfeld/bin/run_lichtfeld.sh "$@"\n' \
+        > /usr/local/bin/LichtFeld-Studio \
+    && chmod +x /usr/local/bin/LichtFeld-Studio
 
 ENV LD_LIBRARY_PATH="/opt/lichtfeld/lib:/opt/lichtfeld/vendor-libs:${LD_LIBRARY_PATH}"
 
